@@ -19,9 +19,6 @@ class ProjectState {
     }
     addListener(listenerFn) {
         this.listeners.push(listenerFn);
-        for (const listenerFn of this.listeners) {
-            listenerFn(this.projects.slice());
-        }
     }
     addProject(title, description, manday) {
         const newProject = {
@@ -31,6 +28,9 @@ class ProjectState {
             manday: manday
         };
         this.projects.push(newProject);
+        for (const listenerFn of this.listeners) {
+            listenerFn(this.projects.slice());
+        }
     }
 }
 const projectState = ProjectState.getInstance();

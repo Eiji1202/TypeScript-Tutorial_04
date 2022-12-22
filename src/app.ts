@@ -19,9 +19,6 @@ class ProjectState {
 
   addListener(listenerFn: Function) {
     this.listeners.push(listenerFn);
-    for (const listenerFn of this.listeners) {
-      listenerFn(this.projects.slice());
-    }
   }
 
   addProject(title: string, description: string, manday: number) {
@@ -33,6 +30,9 @@ class ProjectState {
       manday: manday
     }
     this.projects.push(newProject);
+    for (const listenerFn of this.listeners) {
+      listenerFn(this.projects.slice());
+    }
   }
 }
 
