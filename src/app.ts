@@ -1,28 +1,43 @@
+// ドラッグ＆ドロップ
+interface Draggable {
+  dragStartHandler(event: DragEvent): void;
+  dragEndHandler(event: DragEvent): void;
+}
+
+interface DragTarget {
+  dragOverHandler(event: DragEvent): void;
+  dropHandler(event: DragEvent): void;
+  dragLeaveHandler(event: DragEvent): void;
+}
+
 // Project type
 enum ProjectStatus {
-  Active, Finished
+  Active,
+  Finished,
 }
 
 class Project {
-  constructor(
-    public id: string,
-    public title: string,
-    public description: string,
-    public manday: number,
-    public status: ProjectStatus
-  ) { }
+  constructor(public id: string, public title: string, public description: string, public manday: number, public status: ProjectStatus) {}
 }
 
 // プロジェクトの状態管理のクラス
-type Listener = (items: Project[]) => void;
+// Project State Management
+type Listener<T> = (items: T[]) => void;
 
-class ProjectState {
-  private listeners: Listener[] = [];
+class State<T> {
+  protected listeners: Listener<T>[] = [];
+
+  addListener(listenerFn: Listener<T>) {
+    this.listeners.push(listenerFn);
+  }
+}
+
+class ProjectState extends State<Project> {
   private projects: Project[] = [];
   private static instance: ProjectState;
 
   private constructor() {
-
+    super();
   }
 
   // staticメソッド : クラスをインスタンス化しなくてもアクセスを許可する
@@ -34,20 +49,22 @@ class ProjectState {
     return this.instance;
   }
 
-  addListener(listenerFn: Listener) {
-    this.listeners.push(listenerFn);
-  }
-
   addProject(title: string, description: string, manday: number) {
     // オブジェクト作成
-    const newProject = new Project(
-      Math.random().toString(),
-      title,
-      description,
-      manday,
-      ProjectStatus.Active
-    );
+    const newProject = new Project(Math.random().toString(), title, description, manday, ProjectStatus.Active);
     this.projects.push(newProject);
+    this.updateListeners();
+  }
+
+  moveProject(projectId: string, newStatus: ProjectStatus) {
+    const project = this.projects.find((prj) => prj.id === projectId);
+    if (project && project.status !== newStatus) {
+      project.status = newStatus;
+      this.updateListeners();
+    }
+  }
+
+  private updateListeners() {
     for (const listenerFn of this.listeners) {
       listenerFn(this.projects.slice());
     }
@@ -79,28 +96,28 @@ function validate(validatableInput: Validatable) {
 
   // 最小入力文字数のチェック
   // minLengthの値が設定されていて文字列型の場合、
-  if (validatableInput.minLength != null && typeof validatableInput.value === 'string') {
+  if (validatableInput.minLength != null && typeof validatableInput.value === "string") {
     // 設定された値以上であればtrue
     isValid = isValid && validatableInput.value.length >= validatableInput.minLength;
   }
 
   // 最大入力文字数のチェック
   // maxLengthの値が設定されていて文字列型の場合、
-  if (validatableInput.maxLength != null && typeof validatableInput.value === 'string') {
+  if (validatableInput.maxLength != null && typeof validatableInput.value === "string") {
     // 設定された値以下であればtrue
     isValid = isValid && validatableInput.value.length <= validatableInput.maxLength;
   }
 
   // 最小値のチェック
   // minの値が設定されていて数値型の場合、
-  if (validatableInput.min != null && typeof validatableInput.value === 'number') {
+  if (validatableInput.min != null && typeof validatableInput.value === "number") {
     // 設定された値以上であればtrue
     isValid = isValid && validatableInput.value >= validatableInput.min;
   }
 
   // 最大値のチェック
   // maxの値が設定されていて数値型の場合、
-  if (validatableInput.max != null && typeof validatableInput.value === 'number') {
+  if (validatableInput.max != null && typeof validatableInput.value === "number") {
     // 設定された値以下であればtrue
     isValid = isValid && validatableInput.value <= validatableInput.max;
   }
@@ -116,104 +133,178 @@ function AutoBind(_: any, _2: string, descriptor: PropertyDescriptor) {
     get() {
       const boundFn = originalMethod.bind(this);
       return boundFn;
-    }
-  }
+    },
+  };
   return adjDescriptor;
 }
 
-// Projectリストを作成するクラス
-class ProjectList {
+// 処理を共通化するためにコンポーネントを作成
+//Component Class
+abstract class Component<T extends HTMLElement, U extends HTMLElement> {
   templateElement: HTMLTemplateElement;
-  hostElement: HTMLDivElement;
-  element: HTMLElement;
-  assignedProjects: Project[];
+  hostElement: T;
+  element: U;
 
-  // 引数で'active'か'finished'を受け取る
-  constructor(private type: 'active' | 'finished') {
-    this.templateElement = document.getElementById('project-list')! as HTMLTemplateElement;
-    this.hostElement = document.getElementById('app')! as HTMLDivElement;
-    this.assignedProjects = [];
+  constructor(templateId: string, hostElementId: string, insertAtStart: boolean, newElementId?: string) {
+    this.templateElement = document.getElementById(templateId)! as HTMLTemplateElement;
+    this.hostElement = document.getElementById(hostElementId)! as T;
 
     // importNode : 他の文書から Node または DocumentFragment の複製を作成する。
     // 第一引数にその対象のNodeを、第二引数は対象のNodeの配下のDOMもインポートするかどうか。標準はfalse
     const importedNode = document.importNode(this.templateElement.content, true);
-    // 取得したNodeの最初の子要素（section）を elementプロパティに格納
-    this.element = importedNode.firstElementChild as HTMLElement;
-    // 動的に変わるid属性を付与
-    this.element.id = `${this.type}-projects`;
+    // 取得したNodeの最初の子要素を elementプロパティに格納
+    this.element = importedNode.firstElementChild as U;
+    if (newElementId) {
+      this.element.id = newElementId;
+    }
+
+    this.attach(insertAtStart);
+  }
+
+  abstract configure(): void;
+  abstract renderContent(): void;
+
+  private attach(insertAtBeginning: boolean) {
+    this.hostElement.insertAdjacentElement(insertAtBeginning ? "afterbegin" : "beforeend", this.element);
+  }
+}
+
+// ProjectItem Class
+class ProjectItem extends Component<HTMLUListElement, HTMLLIElement> implements Draggable {
+  private project: Project;
+
+  get manday() {
+    if (this.project.manday < 20) {
+      return this.project.manday.toString() + "人日";
+    } else {
+      return (this.project.manday / 20).toString() + "人月";
+    }
+  }
+
+  constructor(hostId: string, project: Project) {
+    super("single-project", hostId, false, project.id);
+    this.project = project;
+
+    this.configure();
+    this.renderContent();
+  }
+
+  @AutoBind
+  dragStartHandler(event: DragEvent) {
+    event.dataTransfer!.setData("text/plain", this.project.id);
+    event.dataTransfer!.effectAllowed = "move";
+  }
+
+  dragEndHandler(_: DragEvent) {
+    console.log("Drag終了");
+  }
+
+  configure() {
+    this.element.addEventListener("dragstart", this.dragStartHandler);
+    this.element.addEventListener("dragend", this.dragEndHandler);
+  }
+
+  renderContent() {
+    this.element.querySelector("h2")!.textContent = this.project.title;
+    // getter関数を実行
+    this.element.querySelector("h3")!.textContent = this.manday;
+    this.element.querySelector("p")!.textContent = this.project.description;
+  }
+}
+
+// Projectリストを作成するクラス
+// Componentクラスを継承
+class ProjectList extends Component<HTMLDivElement, HTMLElement> implements DragTarget {
+  assignedProjects: Project[];
+
+  // 引数で'active'か'finished'を受け取る
+  constructor(private type: "active" | "finished") {
+    super("project-list", "app", false, `${type}-projects`);
+    this.assignedProjects = [];
+
+    this.configure();
+    this.renderContent();
+  }
+
+  @AutoBind
+  dragOverHandler(event: DragEvent): void {
+    if (event.dataTransfer && event.dataTransfer.types[0] === "text/plain") {
+      event.preventDefault();
+      const listEl = this.element.querySelector("ul")!;
+      listEl.classList.add("droppable");
+    }
+  }
+
+  @AutoBind
+  dropHandler(event: DragEvent): void {
+    const prjId = event.dataTransfer!.getData("text/plain");
+    projectState.moveProject(prjId, this.type === "active" ? ProjectStatus.Active : ProjectStatus.Finished);
+  }
+
+  @AutoBind
+  dragLeaveHandler(_: DragEvent): void {
+    const listEl = this.element.querySelector("ul")!;
+    listEl.classList.remove("droppable");
+  }
+
+  configure() {
+    this.element.addEventListener("dragover", this.dragOverHandler);
+    this.element.addEventListener("drop", this.dropHandler);
+    this.element.addEventListener("dragleave", this.dragLeaveHandler);
 
     projectState.addListener((projects: Project[]) => {
-      const relevantProjects = projects.filter(prj => {
-        if (this.type === 'active') {
+      const relevantProjects = projects.filter((prj) => {
+        if (this.type === "active") {
           return prj.status === ProjectStatus.Active;
         }
         return prj.status === ProjectStatus.Finished;
-      })
+      });
       this.assignedProjects = relevantProjects;
       this.renderProjects();
     });
+  }
 
-    this.attach();
-    this.renderContent();
+  renderContent() {
+    const listId = `${this.type}-projects-list`;
+    // ul要素にidを付与
+    this.element.querySelector("ul")!.id = listId;
+
+    // typeがactiveの場合とfinishedの場合でh2タグのテキストを変えて付与
+    this.element.querySelector("h2")!.textContent = this.type === "active" ? "実行中プロジェクト" : "完了プロジェクト";
   }
 
   private renderProjects() {
     const listEl = document.getElementById(`${this.type}-projects-list`)! as HTMLUListElement;
-    listEl.innerHTML = '';
+    listEl.innerHTML = "";
     for (const prjItem of this.assignedProjects) {
-      const listItem = document.createElement('li');
-      listItem.textContent = prjItem.title;
-      listEl?.appendChild(listItem);
+      new ProjectItem(listEl.id, prjItem);
     }
-  }
-
-  private renderContent() {
-    const listId = `${this.type}-projects-list`;
-    // ul要素にidを付与
-    this.element.querySelector('ul')!.id = listId;
-
-    // typeがactiveの場合とfinishedの場合でh2タグのテキストを変えて付与
-    this.element.querySelector('h2')!.textContent = this.type === 'active' ? '実行中プロジェクト' : '完了プロジェクト';
-  }
-
-  private attach() {
-    // id="app"の要素（div）に <section> 要素を入れる。
-    // insertAdjacentElement : appendChildに似ている。第一引数はその要素のどこに入れるか指定できる。ここでは終了タグの前
-    this.hostElement.insertAdjacentElement('beforeend', this.element);
   }
 }
 
-
 // Projectを作成するクラス
-class ProjectInput {
-  templateElement: HTMLTemplateElement;
-  hostElement: HTMLDivElement;
-  element: HTMLFormElement;
+class ProjectInput extends Component<HTMLDivElement, HTMLFormElement> {
   titleInputElement: HTMLInputElement;
   descriptionInputElement: HTMLInputElement;
   mandayInputElement: HTMLInputElement;
 
   constructor() {
-    this.templateElement = document.getElementById('project-input')! as HTMLTemplateElement;
-    this.hostElement = document.getElementById('app')! as HTMLDivElement;
-
-    // importNode : 他の文書から Node または DocumentFragment の複製を作成する。
-    // 第一引数にその対象のNodeを、第二引数は対象のNodeの配下のDOMもインポートするかどうか。標準はfalse
-    const importedNode = document.importNode(this.templateElement.content, true);
-    // 取得したNodeの最初の子要素（Form）を elementプロパティに格納
-    this.element = importedNode.firstElementChild as HTMLFormElement;
-    // id属性を付与
-    this.element.id = 'user-input';
+    super("project-input", "app", true, "user-input");
 
     // formタグの中のそれぞれの要素を取得
-    this.titleInputElement = this.element.querySelector('#title') as HTMLInputElement;
-    this.descriptionInputElement = this.element.querySelector('#description') as HTMLInputElement;
-    this.mandayInputElement = this.element.querySelector('#manday') as HTMLInputElement;
-
+    this.titleInputElement = this.element.querySelector("#title") as HTMLInputElement;
+    this.descriptionInputElement = this.element.querySelector("#description") as HTMLInputElement;
+    this.mandayInputElement = this.element.querySelector("#manday") as HTMLInputElement;
 
     this.configure();
-    this.attach();
   }
+
+  public configure() {
+    //form要素にイベントを追加。formが送信されたらsubmitHandler関数を実行
+    this.element.addEventListener("submit", this.submitHandler);
+  }
+
+  renderContent() {}
 
   // formのそれぞれ入力値を取得するしてバリデーションを行う関数
   // 返り値はタプル型または値を返さないunion型を指定
@@ -233,7 +324,7 @@ class ProjectInput {
     const descriptionValidatable: Validatable = {
       value: enteredDescription,
       required: true,
-      minLength: 5
+      minLength: 5,
     };
 
     // mandayのValidatableオブジェクト
@@ -241,17 +332,13 @@ class ProjectInput {
       value: +enteredManday,
       required: true,
       min: 1,
-      max: 1000
+      max: 1000,
     };
 
     //バリデーション
     // validate関数に引数としてオブジェクトを渡す
-    if (
-      !validate(titleValidatable) ||
-      !validate(descriptionValidatable) ||
-      !validate(mandayValidatable)
-    ) {
-      alert('入力値が正しくありません。再度お試しください。');
+    if (!validate(titleValidatable) || !validate(descriptionValidatable) || !validate(mandayValidatable)) {
+      alert("入力値が正しくありません。再度お試しください。");
       return;
     } else {
       //成功したら入力値をタプル型で返す
@@ -280,21 +367,8 @@ class ProjectInput {
       this.clearInputs();
     }
   }
-
-  private configure() {
-    //form要素にイベントを追加。formが送信されたらsubmitHandler関数を実行
-    this.element.addEventListener('submit', this.submitHandler);
-  }
-
-  private attach() {
-    // id="app"の要素（div）に <form> 要素を入れる。
-    // insertAdjacentElement : appendChildに似ている。第一引数はその要素のどこに入れるか指定できる。ここでは開始タグの直下
-    this.hostElement.insertAdjacentElement('afterbegin', this.element);
-  }
-
-
 }
 
 const prjInput = new ProjectInput();
-const activePrjList = new ProjectList('active');
-const finishedPrjList = new ProjectList('finished');
+const activePrjList = new ProjectList("active");
+const finishedPrjList = new ProjectList("finished");
